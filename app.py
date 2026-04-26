@@ -131,17 +131,21 @@ with st.sidebar:
 
     if st.button("💾 Save settings", use_container_width=True):
         storage.save_config(cfg)
-        st.success("Saved.")
+        st.session_state["last_status"] = ("success", "Settings saved.")
         st.rerun()
 
     st.divider()
     if st.button("🚀 Run briefing now", use_container_width=True, type="primary"):
-        with st.spinner("Fetching sources and analyzing with Claude…"):
+        import traceback
+        with st.spinner("Fetching sources and analyzing with Gemini…"):
             try:
                 run_daily(cfg)
-                st.success("Briefing ready.")
+                st.session_state["last_status"] = ("success", "Briefing ready — see main panel.")
             except Exception as e:
-                st.error(f"Run failed: {e}")
+                st.session_state["last_status"] = (
+                    "error",
+                    f"Run failed: {type(e).__name__}: {e}\n\n```\n{traceback.format_exc()}\n```",
+                )
         st.rerun()
 
     st.divider()
@@ -170,15 +174,24 @@ briefing, brief_date = pick_briefing()
 
 # Auto-run on first open if no briefing for today and user opted in
 today = datetime.utcnow().date().isoformat()
-if cfg.get("auto_run_in_app") and (not briefing or brief_date != today) and os.getenv("ANTHROPIC_API_KEY"):
-    if "auto_run_done" not in st.session_state:
-        st.session_state["auto_run_done"] = True
-        with st.spinner("First time today — generating your briefing…"):
-            try:
-                run_daily(cfg)
-            except Exception as e:
-                st.warning(f"Auto-run failed: {e}")
-        briefing, brief_date = pick_briefing()
+have_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+if (
+    cfg.get("auto_run_in_app")
+    and have_key
+    and (not briefing or brief_date != today)
+    and "auto_run_done" not in st.session_state
+):
+    import traceback
+    st.session_state["auto_run_done"] = True
+    with st.spinner("First time today — generating your briefing…"):
+        try:
+            run_daily(cfg)
+        except Exception as e:
+            st.session_state["last_status"] = (
+                "error",
+                f"Auto-run failed: {type(e).__name__}: {e}\n\n```\n{traceback.format_exc()}\n```",
+            )
+    briefing, brief_date = pick_briefing()
 
 
 # ---- Header --------------------------------------------------------------
@@ -187,6 +200,25 @@ st.caption(
     "Daily executive briefing on the AI industry: top stories, leader voices, "
     "big-tech moves, and *what companies are actually shipping*."
 )
+
+# Persistent status banner (survives reruns)
+status = st.session_state.pop("last_status", None)
+if status:
+    kind, msg = status
+    (st.success if kind == "success" else st.error)(msg)
+
+with st.expander("🩺 Diagnostics", expanded=not have_key):
+    st.write(f"**GEMINI_API_KEY set:** {have_key}")
+    st.write(f"**Latest briefing in DB:** {brief_date or 'none'}")
+    st.write(f"**Today (UTC):** {today}")
+    st.write(f"**Configured model:** {cfg.get('model')}")
+    if not have_key:
+        st.error(
+            "No Gemini key visible to the app. On Streamlit Cloud, open "
+            "**⋮ → Settings → Secrets** and add:\n\n"
+            '```toml\nGEMINI_API_KEY = "your-key-here"\n```\n\n'
+            "Save and the app will reboot."
+        )
 
 if not briefing:
     st.info(
