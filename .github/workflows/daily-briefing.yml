@@ -18,7 +18,7 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Run pipeline & send email
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
           # Email config — set as repo secrets
           AIMR_EMAIL_TO: ${{ secrets.AIMR_EMAIL_TO }}

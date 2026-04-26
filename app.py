@@ -43,8 +43,12 @@ cfg = storage.load_config()
 with st.sidebar:
     st.markdown("## ⚙️ Settings")
 
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        st.error("`ANTHROPIC_API_KEY` is not set. Add it to your environment or `.env`.")
+    if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+        st.error(
+            "`GEMINI_API_KEY` is not set. Get a free key at "
+            "[aistudio.google.com/apikey](https://aistudio.google.com/apikey) "
+            "and add it to your environment or `.env`."
+        )
 
     with st.expander("🕒 Delivery schedule", expanded=True):
         cfg["delivery_time"] = st.text_input(
@@ -98,15 +102,18 @@ with st.sidebar:
         )
 
     with st.expander("🤖 Model"):
+        gemini_models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
+        current = cfg.get("model", "gemini-2.5-flash")
+        if current not in gemini_models:
+            current = "gemini-2.5-flash"
         cfg["model"] = st.selectbox(
-            "Claude model",
-            options=["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"],
-            index=["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"].index(
-                cfg.get("model", "claude-sonnet-4-6")
-            ),
+            "Gemini model (free tier)",
+            options=gemini_models,
+            index=gemini_models.index(current),
+            help="Flash = best speed/cost. Pro = highest quality, lower rate limit.",
         )
         cfg["max_articles"] = st.slider(
-            "Max articles fed to Claude", 30, 150, cfg.get("max_articles", 80), step=10
+            "Max articles fed to Gemini", 30, 150, cfg.get("max_articles", 80), step=10
         )
 
     with st.expander("✉️ Email delivery"):

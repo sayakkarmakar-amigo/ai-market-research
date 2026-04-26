@@ -1,5 +1,5 @@
 streamlit>=1.40
-anthropic>=0.40
+google-genai>=0.3
 feedparser>=6.0
 requests>=2.32
 python-dotenv>=1.0

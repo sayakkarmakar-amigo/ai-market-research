@@ -24,7 +24,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "include_hackernews": True,
     "include_reddit": True,
     "newsapi_query": "",
-    "model": "claude-sonnet-4-6",
+    "model": "gemini-2.5-flash",
     "max_articles": 80,
     "email": {
         "enabled": False,

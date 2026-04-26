@@ -1,7 +1,7 @@
-"""Claude-powered analysis of the day's AI signal.
+"""Gemini-powered analysis of the day's AI signal.
 
-Produces a structured JSON briefing the UI can render directly. Uses prompt
-caching on the static system prompt so repeated daily runs are cheap.
+Produces a structured JSON briefing the UI can render directly. Uses Gemini
+2.5 Flash by default — generous free tier and JSON-mode support.
 """
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ import re
 from datetime import datetime
 from typing import Any
 
-from anthropic import Anthropic
+from google import genai
+from google.genai import types as gtypes
 
 
-# Default to Sonnet 4.6 — best balance of cost/quality. Override via env.
-DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-HAIKU_MODEL = "claude-haiku-4-5-20251001"
+# Default to Gemini 2.5 Flash — best free-tier balance. Override via env or UI.
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 SYSTEM_PROMPT = """You are the Market Research Analyst for the user's "Virtual Crew".
@@ -93,11 +93,17 @@ many implementations as the source material supports (target 5-15).
 """
 
 
-def _client() -> Anthropic:
-    return Anthropic()
+def _client() -> genai.Client:
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "GEMINI_API_KEY not set — get a free key at "
+            "https://aistudio.google.com/apikey and add it to your environment."
+        )
+    return genai.Client(api_key=key)
 
 
-def _articles_to_context(articles: list[dict], max_chars: int = 60_000) -> str:
+def _articles_to_context(articles: list[dict], max_chars: int = 80_000) -> str:
     """Render the article list as a compact context block. Truncate if huge."""
     lines = []
     for i, a in enumerate(articles, 1):
@@ -122,7 +128,6 @@ def _extract_json(text: str) -> dict[str, Any]:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Find the first balanced brace block
     start = text.find("{")
     if start == -1:
         raise ValueError("No JSON object found in model output")
@@ -143,12 +148,7 @@ def analyze(
     model: str | None = None,
     max_articles: int = 80,
 ) -> dict[str, Any]:
-    """Run Claude over the article list and return the structured briefing."""
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise RuntimeError(
-            "ANTHROPIC_API_KEY not set — add it to your environment or .env file."
-        )
-
+    """Run Gemini over the article list and return the structured briefing."""
     articles = articles[:max_articles]
     context = _articles_to_context(articles)
     industries_clause = (
@@ -166,34 +166,29 @@ def analyze(
     )
 
     client = _client()
-    resp = client.messages.create(
-        model=model or DEFAULT_MODEL,
-        max_tokens=8000,
-        system=[
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            },
-            {
-                "type": "text",
-                "text": SCHEMA_INSTRUCTIONS,
-                "cache_control": {"type": "ephemeral"},
-            },
-        ],
-        messages=[{"role": "user", "content": user_msg}],
+    model_id = model or DEFAULT_MODEL
+
+    resp = client.models.generate_content(
+        model=model_id,
+        contents=user_msg,
+        config=gtypes.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            response_mime_type="application/json",
+            temperature=0.3,
+            max_output_tokens=8192,
+        ),
     )
 
-    text = "".join(block.text for block in resp.content if block.type == "text")
+    text = resp.text or ""
     briefing = _extract_json(text)
+
+    usage = getattr(resp, "usage_metadata", None)
     briefing["_meta"] = {
         "generated_at": datetime.utcnow().isoformat(),
-        "model": model or DEFAULT_MODEL,
+        "model": model_id,
         "article_count": len(articles),
-        "input_tokens": resp.usage.input_tokens,
-        "output_tokens": resp.usage.output_tokens,
-        "cache_read_tokens": getattr(resp.usage, "cache_read_input_tokens", 0),
-        "cache_creation_tokens": getattr(resp.usage, "cache_creation_input_tokens", 0),
+        "input_tokens": getattr(usage, "prompt_token_count", 0) if usage else 0,
+        "output_tokens": getattr(usage, "candidates_token_count", 0) if usage else 0,
     }
     return briefing
 
