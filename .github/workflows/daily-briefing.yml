@@ -1,0 +1,30 @@
+name: Daily AI Briefing
+
+on:
+  schedule:
+    # 07:30 IST = 02:00 UTC. Edit cron to change time.
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  brief:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run pipeline & send email
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          # Email config — set as repo secrets
+          AIMR_EMAIL_TO: ${{ secrets.AIMR_EMAIL_TO }}
+          AIMR_EMAIL_FROM: ${{ secrets.AIMR_EMAIL_FROM }}
+          AIMR_SMTP_HOST: ${{ secrets.AIMR_SMTP_HOST }}
+          AIMR_SMTP_PORT: ${{ secrets.AIMR_SMTP_PORT }}
+          AIMR_SMTP_USER: ${{ secrets.AIMR_SMTP_USER }}
+          AIMR_SMTP_PASSWORD: ${{ secrets.AIMR_SMTP_PASSWORD }}
+        run: python ci_run.py
