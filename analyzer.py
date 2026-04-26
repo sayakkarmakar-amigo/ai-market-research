@@ -120,8 +120,52 @@ def _articles_to_context(articles: list[dict], max_chars: int = 80_000) -> str:
     return "\n".join(lines)
 
 
+def _repair_truncated_json(text: str) -> str:
+    """Close any unclosed strings/arrays/objects in a truncated JSON blob.
+
+    Tracks the deepest "safe" prefix — the last point where the parser could
+    have stopped cleanly — along with the stack at that moment, so the right
+    set of closers can be appended. Used when Gemini cuts off mid-emission.
+    """
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    last_safe_pos = -1
+    last_safe_stack: list[str] | None = None
+
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append("}" if ch == "{" else "]")
+        elif ch in "}]":
+            if stack and stack[-1] == ch:
+                stack.pop()
+                # After a balanced close we're at a complete value.
+                last_safe_pos = i + 1
+                last_safe_stack = stack[:]
+        elif ch == "," and stack:
+            # Comma inside a structure marks the end of the previous element.
+            last_safe_pos = i
+            last_safe_stack = stack[:]
+
+    if last_safe_pos > 0:
+        prefix = text[:last_safe_pos].rstrip().rstrip(",")
+        return prefix + "".join(reversed(last_safe_stack or []))
+    # No safe spot found — best-effort close of what we have.
+    return text + "".join(reversed(stack))
+
+
 def _extract_json(text: str) -> dict[str, Any]:
-    """Best-effort JSON extraction — strip markdown fences, find first {…}."""
+    """Best-effort JSON extraction — strip fences, find first {…}, repair if truncated."""
     text = text.strip()
     text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.MULTILINE)
     try:
@@ -131,15 +175,28 @@ def _extract_json(text: str) -> dict[str, Any]:
     start = text.find("{")
     if start == -1:
         raise ValueError("No JSON object found in model output")
+    candidate = text[start:]
+    # First try: balanced-brace scan
     depth = 0
-    for i, ch in enumerate(text[start:], start):
+    for i, ch in enumerate(candidate):
         if ch == "{":
             depth += 1
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                return json.loads(text[start : i + 1])
-    raise ValueError("Unbalanced JSON in model output")
+                try:
+                    return json.loads(candidate[: i + 1])
+                except json.JSONDecodeError:
+                    break
+    # Second try: repair truncated JSON
+    repaired = _repair_truncated_json(candidate)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Could not parse JSON even after repair ({e}). "
+            f"Output started with: {candidate[:200]!r}"
+        )
 
 
 def analyze(
@@ -168,15 +225,25 @@ def analyze(
     client = _client()
     model_id = model or DEFAULT_MODEL
 
+    # Gemini 2.5 models default to internal "thinking" tokens that count
+    # against max_output_tokens — for a JSON-extraction task we don't need
+    # them and they cause silent truncation. Disable for 2.5 models.
+    cfg_kwargs: dict[str, Any] = dict(
+        system_instruction=SYSTEM_PROMPT,
+        response_mime_type="application/json",
+        temperature=0.3,
+        max_output_tokens=16384,
+    )
+    if "2.5" in model_id:
+        try:
+            cfg_kwargs["thinking_config"] = gtypes.ThinkingConfig(thinking_budget=0)
+        except Exception:
+            pass
+
     resp = client.models.generate_content(
         model=model_id,
         contents=user_msg,
-        config=gtypes.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            response_mime_type="application/json",
-            temperature=0.3,
-            max_output_tokens=8192,
-        ),
+        config=gtypes.GenerateContentConfig(**cfg_kwargs),
     )
 
     text = resp.text or ""

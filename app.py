@@ -13,11 +13,20 @@ import plotly.express as px
 import streamlit as st
 from dotenv import load_dotenv
 
+load_dotenv()
+
+# Belt-and-suspenders: copy any secrets Streamlit Cloud has into the
+# environment BEFORE we import modules that read os.getenv at import time.
+try:
+    for _k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "NEWSAPI_KEY", "GEMINI_MODEL"):
+        if _k in st.secrets and not os.getenv(_k):
+            os.environ[_k] = str(st.secrets[_k])
+except Exception:
+    pass
+
 import storage
 from pipeline import run_daily
 from scheduler import DailyScheduler
-
-load_dotenv()
 
 st.set_page_config(
     page_title="AI Market Research — Virtual Crew",
